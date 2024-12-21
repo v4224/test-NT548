@@ -1,44 +1,39 @@
-name: CI/CD Pipeline
+name: CI/CD pipeline
 
 on:
   push:
     branches:
       - main
-  pull_request:
-    branches:
-      - main
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, web-runner]
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - uses: actions/checkout@v2
 
-    - name: Set up Docker
-      uses: docker/setup-buildx-action@v2
+      - uses: sonarsource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-    - name: Build Docker image
-      run: |
-        docker build -t test-nt548 .
+      - name: Build and Push Image
+        run: |
+          docker build -t web .
+          docker tag web hoangvu42/web:latest
+          docker login -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_TOKEN }}
+          docker push hoangvu42/web:latest
 
-    - name: Push Docker image to DockerHub
-      env:
-        DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-        DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
-      run: |
-        echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
-        docker tag test-nt548 $DOCKER_USERNAME/test-nt548:latest
-        docker push $DOCKER_USERNAME/test-nt548:latest
-
-    - name: Run SonarQube analysis
-      uses: SonarSource/sonarqube-scan-action@v2
-      env:
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      with:
-        projectKey: test-nt548
-
-    - name: Security scan with Trivy
-      run: |
-        trivy image --severity HIGH,CRITICAL test-nt548
+  deploy:
+    name: Deploy Application
+    needs: build
+    runs-on: [self-hosted, web-runner]
+    steps:
+      - name: Remove Existing Containers
+        run: docker-compose downs
+      - name: Pull Docker Images
+        run: docker pull hoangvu42/web:latest
+      - name: Image scan
+        run: trivy image hoangvu42/web:latest > trivy_scan_image_report.txt
+      - name: Deploy with Docker Compose
+        run: docker-compose up -d
